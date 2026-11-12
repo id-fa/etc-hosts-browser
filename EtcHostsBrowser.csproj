@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <AssemblyName>EtcHostsBrowser</AssemblyName>
+    <RootNamespace>EtcHostsBrowser</RootNamespace>
+    <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
+    <!-- WebView2 パッケージに同梱の WPF 用 DLL に由来する無害な警告を抑止 -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+    <!-- 発行物（publish\）をソースとして拾わない -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish\**</DefaultItemExcludes>
+    <!-- 参照パッケージの API ドキュメント（*.xml）は配布物に不要 -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!--
+    配布物にライセンス文書を同梱する。
+    WebView2 SDK（BSD 3-Clause 形式）はバイナリ再配布時に著作権表示と条件文の同梱が必要。
+    ランタイム同梱（self-contained）の場合は .NET ランタイムのライセンスも添える。
+  -->
+  <Target Name="CopyLicensesToPublishDir" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\LICENSE" DestinationFiles="$(PublishDir)LICENSE.txt" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\THIRD-PARTY-NOTICES.md" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="$(PkgMicrosoft_Web_WebView2)\LICENSE.txt" DestinationFiles="$(PublishDir)licenses\WebView2-SDK-LICENSE.txt" Condition="Exists('$(PkgMicrosoft_Web_WebView2)\LICENSE.txt')" />
+    <Copy SourceFiles="$(PkgMicrosoft_Web_WebView2)\NOTICE.txt" DestinationFiles="$(PublishDir)licenses\WebView2-SDK-NOTICE.txt" Condition="Exists('$(PkgMicrosoft_Web_WebView2)\NOTICE.txt')" />
+    <Copy SourceFiles="$(NetCoreRoot)LICENSE.txt" DestinationFiles="$(PublishDir)licenses\dotnet-LICENSE.txt" Condition="'$(SelfContained)' == 'true' And Exists('$(NetCoreRoot)LICENSE.txt')" />
+    <Copy SourceFiles="$(NetCoreRoot)ThirdPartyNotices.txt" DestinationFiles="$(PublishDir)licenses\dotnet-ThirdPartyNotices.txt" Condition="'$(SelfContained)' == 'true' And Exists('$(NetCoreRoot)ThirdPartyNotices.txt')" />
+  </Target>
+
+</Project>

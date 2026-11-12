@@ -1,0 +1,21 @@
+# ビルド出力
+bin/
+obj/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.DotSettings.user
+
+# ログ・一時ファイル
+*.log
+*.tmp
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
