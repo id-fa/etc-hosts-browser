@@ -5,11 +5,13 @@ public sealed class HostsDialog : Form
 {
     private readonly TextBox _editor;
     private readonly CheckBox _noProxy;
+    private readonly CheckBox _preferHttp;
 
     public string HostsText => _editor.Text;
     public bool NoProxy => _noProxy.Checked;
+    public bool PreferHttp => _preferHttp.Checked;
 
-    public HostsDialog(string hostsText, bool noProxy)
+    public HostsDialog(string hostsText, bool noProxy, bool preferHttp)
     {
         Text = "hosts 設定（このアプリの中だけで有効）";
         StartPosition = FormStartPosition.CenterParent;
@@ -49,6 +51,15 @@ public sealed class HostsDialog : Form
             Text = "システムのプロキシを使わず直接接続する（プロキシ経由だと hosts 設定が効かない場合に ON）",
         };
 
+        _preferHttp = new CheckBox
+        {
+            Dock = DockStyle.Bottom,
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 6),
+            Checked = preferHttp,
+            Text = "プロトコルを省略した URL を http で開く（https への自動切り替えと HSTS を無効にする）",
+        };
+
         var ok = new Button { Text = "OK", AutoSize = true, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "キャンセル", AutoSize = true, DialogResult = DialogResult.Cancel };
         var buttons = new FlowLayoutPanel
@@ -63,6 +74,7 @@ public sealed class HostsDialog : Form
         Controls.Add(_editor);
         Controls.Add(help);
         Controls.Add(_noProxy);
+        Controls.Add(_preferHttp);
         Controls.Add(buttons);
 
         AcceptButton = null; // Enter は改行に使う

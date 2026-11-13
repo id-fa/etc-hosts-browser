@@ -46,6 +46,7 @@ public sealed class MainForm : Form
     private DevicePreset _device = DevicePreset.All[0];
     private bool _restarting;
     private bool _navigationFailed;
+    private bool _hstsClearPending;
 
     private readonly Panel _hostPanel;
     private readonly Button _back, _forward, _reload, _shot, _cert, _hosts;
@@ -109,6 +110,7 @@ public sealed class MainForm : Form
         _hostsText = cli.HostsText ?? AppSettings.LoadHostsText();
         _rules = HostsFile.Parse(_hostsText);
         if (cli.NoProxy) _settings.NoProxy = true;
+        if (cli.PreferHttp) _settings.PreferHttp = true;
 
         Text = AppTitle;
         ClientSize = new Size(LogicalToDeviceUnits(1200), LogicalToDeviceUnits(800));
@@ -240,6 +242,11 @@ public sealed class MainForm : Form
             args.Add($"--host-resolver-rules=\"{HostsFile.ToResolverRules(_rules)}\"");
         if (_settings.NoProxy)
             args.Add("--no-proxy-server");
+        if (_settings.PreferHttp)
+        {
+            // http:// の URL を https:// に自動で昇格させる機能（失敗時だけ http に戻る）を止める
+            args.Add("--disable-features=HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,HttpsFirstBalancedMode");
+        }
         if (_cli.DebugPort is { } port)
             args.Add($"--remote-debugging-port={port}");
         return string.Join(" ", args);
@@ -484,7 +491,7 @@ public sealed class MainForm : Form
         string url = input.Trim();
         if (url.Length == 0) return;
         if (!url.Contains("://") && !url.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
-            url = "https://" + url;
+            url = (_settings.PreferHttp ? "http://" : "https://") + url;
 
         try
         {
@@ -544,12 +551,44 @@ public sealed class MainForm : Form
                     info.ValidTo = DateTimeOffset.FromUnixTimeSeconds((long)unix);
             }
 
+            if (_settings.PreferHttp && uri.Scheme == Uri.UriSchemeHttps
+                && res.TryGetProperty("headers", out var headers) && headers.ValueKind == JsonValueKind.Object
+                && headers.EnumerateObject().Any(h => h.Name.Equals("Strict-Transport-Security", StringComparison.OrdinalIgnoreCase)))
+                _ = ForgetHstsAsync();
+
             if (IsWeb(_webView?.Source) && OriginOf(_webView!.Source) .Equals(origin, StringComparison.OrdinalIgnoreCase))
                 UpdateStatus();
         }
         catch (JsonException)
         {
             // 想定外の形式のイベントは無視する
+        }
+    }
+
+    /// <summary>
+    /// サイトが Strict-Transport-Security ヘッダーで覚えさせた「次からは https で」を忘れさせる。
+    /// 個別に消す手段がなく、キャッシュの消去に相乗りしている（Chromium はこのとき HSTS も消す）。
+    /// Chromium に組み込みの HSTS プリロードリストは消せない。
+    /// </summary>
+    private async Task ForgetHstsAsync()
+    {
+        if (_hstsClearPending) return;
+        _hstsClearPending = true;
+        try
+        {
+            // 1 ページの読み込みで何度も届くので、少し待ってまとめて 1 回だけ消す
+            await Task.Delay(300);
+            _hstsClearPending = false;
+            if (Core is { } core)
+                await core.CallDevToolsProtocolMethodAsync("Network.clearBrowserCache", "{}");
+        }
+        catch (Exception)
+        {
+            // ブラウザの再起動や終了と重なった場合など。次の応答でやり直す
+        }
+        finally
+        {
+            _hstsClearPending = false;
         }
     }
 
@@ -615,6 +654,7 @@ public sealed class MainForm : Form
     {
         _hostsLabel.Text = $"hosts: {_rules.Count} 件"
                            + (_settings.NoProxy ? " / プロキシ不使用" : "")
+                           + (_settings.PreferHttp ? " / http 優先" : "")
                            + (_cli.DebugPort is { } port ? $" / CDP 127.0.0.1:{port}" : "")
                            + (_persist ? "" : " / 一時セッション");
         _hostsLabel.ToolTipText = _rules.Count == 0
@@ -904,13 +944,14 @@ public sealed class MainForm : Form
     {
         if (_restarting) return;
 
-        using var dialog = new HostsDialog(_hostsText, _settings.NoProxy);
+        using var dialog = new HostsDialog(_hostsText, _settings.NoProxy, _settings.PreferHttp);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         try
         {
             _hostsText = dialog.HostsText;
             _settings.NoProxy = dialog.NoProxy;
+            _settings.PreferHttp = dialog.PreferHttp;
             if (_persist)
             {
                 AppSettings.SaveHostsText(_hostsText);

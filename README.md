@@ -42,7 +42,7 @@ Windows の `hosts` ファイルを編集できない（管理者権限がない
 | デバイス選択 | デスクトップ / iPhone / Android / iPad の表示幅と User-Agent に切り替え |
 | スクリーンショット | 「表示されている範囲」または「ページ全体」を PNG で保存 |
 | 証明書 | 表示中の HTTPS サイトのサーバ証明書を表示 |
-| hosts 設定 | アプリ内 hosts の編集。OK でブラウザ部分を再起動して反映 |
+| hosts 設定 | アプリ内 hosts の編集。OK でブラウザ部分を再起動して反映。「プロキシを使わない」「http で開く」の切り替えもここ |
 | F5 / Ctrl+L | 再読み込み / アドレスバーへ移動 |
 
 ### Cookie などの扱い
@@ -67,6 +67,7 @@ EtcHostsBrowser.exe [URL] [オプション]
 | `--viewport WxH` | 表示領域のサイズ（CSS ピクセル。例: `1280x800`） |
 | `--basic-auth USER:PASS` | Basic 認証に自動で応答する |
 | `--no-proxy` | システムのプロキシを使わず直接接続する |
+| `--prefer-http` | プロトコルを省略した URL を `http://` で開き、`http://` を `https://` に自動で切り替えない（HTTPS への自動アップグレードと HSTS を無効にする） |
 | `--remote-debugging-port N` | `127.0.0.1:N` で Chrome DevTools Protocol を公開する |
 | `--json` | ページを開いて結果を JSON で標準出力に出し、終了する |
 | `--screenshot PATH` | PNG スクリーンショットを保存して終了する |
@@ -76,7 +77,7 @@ EtcHostsBrowser.exe [URL] [オプション]
 | `--timeout MS` | 読み込み待ちの上限（既定 30000） |
 | `--help` | ヘルプ（英語）を表示 |
 
-`--hosts` `--hosts-file` `--no-proxy` `--remote-debugging-port` `--json` `--screenshot` のいずれかを付けて起動した場合、保存済みの hosts 設定は読み込まず、書き換えもしません。
+`--hosts` `--hosts-file` `--no-proxy` `--prefer-http` `--remote-debugging-port` `--json` `--screenshot` のいずれかを付けて起動した場合、保存済みの hosts 設定は読み込まず、書き換えもしません。
 
 ### ワンショットモード（`--json` / `--screenshot`）
 
@@ -147,6 +148,7 @@ EtcHostsBrowser.exe https://www.example.com/ --hosts "192.0.2.10 www.example.com
 
 - **検証専用です。** SSL サーバ証明書のエラーを無視して表示するため、通常のブラウザが防いでくれる盗聴・なりすましを防げません。普段使いのブラウザとしては使わないでください。
 - **プロキシ環境では hosts 設定が効かないことがあります。** その場合は hosts 設定画面の「システムのプロキシを使わず直接接続する」（または `--no-proxy`）を試してください。
+- **`http://` で開いても `https://` に切り替わることがあります。** 既定では、プロトコルを省略した URL は `https://` で開き、`http://` と明示してもブラウザエンジンが先に `https://` を試します。HTTP のまま確認したいときは、hosts 設定画面の「プロトコルを省略した URL を http で開く」（または `--prefer-http`）を ON にしてください。サイトが HSTS で指定した「次回から https」も無視します（そのためにキャッシュを随時消去します）。ただし、ブラウザエンジンに組み込まれた HSTS プリロードリストに載っているドメインと、サーバ自身が返すリダイレクトは対象外です。
 - **`--basic-auth` のパスワードはコマンドライン履歴に残ります。** 検証用の認証情報にとどめてください。
 - デバイスの模擬は表示幅・User-Agent・タッチ操作の再現であり、実機のブラウザエンジン（Safari など）の挙動までは再現しません。
 

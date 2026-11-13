@@ -18,6 +18,11 @@ public sealed class AppSettings
     /// <summary>システムのプロキシを使わず直接接続する。</summary>
     public bool NoProxy { get; set; }
 
+    /// <summary>
+    /// プロトコルを省略した URL を http で開き、https への自動昇格（HTTPS アップグレード・HSTS）もさせない。
+    /// </summary>
+    public bool PreferHttp { get; set; }
+
     /// <summary>選択中のデバイス名。</summary>
     public string Device { get; set; } = "";
 

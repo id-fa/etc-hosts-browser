@@ -11,6 +11,7 @@ public sealed class CliOptions
     /// <summary>--hosts / --hosts-file で渡された hosts 設定（この起動の間だけ有効）。</summary>
     public string? HostsText { get; private set; }
     public bool NoProxy { get; private set; }
+    public bool PreferHttp { get; private set; }
     public DevicePreset? Device { get; private set; }
     public int? DebugPort { get; private set; }
     public string? ScreenshotPath { get; private set; }
@@ -29,7 +30,7 @@ public sealed class CliOptions
     /// <summary>
     /// 保存済みの設定と違う条件で動かすモード。hosts 設定などを読み書きせず、この起動の間だけ有効にする。
     /// </summary>
-    public bool IsIsolated => IsBatch || HostsText != null || NoProxy || DebugPort != null;
+    public bool IsIsolated => IsBatch || HostsText != null || NoProxy || PreferHttp || DebugPort != null;
 
     /// <summary>この起動専用の使い捨てプロファイルの場所（Program が設定する）。</summary>
     public string ProfileDir { get; set; } = "";
@@ -50,6 +51,9 @@ public sealed class CliOptions
           --viewport WxH                viewport size in CSS pixels (e.g. 1280x800)
           --basic-auth USER:PASS        answer HTTP Basic authentication automatically
           --no-proxy                    connect directly, ignoring the system proxy
+          --prefer-http                 open URLs without a scheme as http:// and never upgrade
+                                        http:// to https:// (automatic HTTPS upgrades and HSTS
+                                        learned from visited sites; the HSTS preload list still applies)
           --remote-debugging-port N     expose the Chrome DevTools Protocol on 127.0.0.1:N so that
                                         Playwright / Puppeteer / browser MCP servers can attach
                                         (e.g. connectOverCDP("http://127.0.0.1:N"))
@@ -68,8 +72,8 @@ public sealed class CliOptions
           Invalid TLS certificates never block the page; they are reported in the JSON instead.
           Cookies, cache and site storage live only while the window is open; every launch starts
           clean and its profile is deleted on exit.
-          Runs with any of --hosts, --hosts-file, --no-proxy, --remote-debugging-port or one-shot
-          options do not read or modify the saved hosts settings.
+          Runs with any of --hosts, --hosts-file, --no-proxy, --prefer-http, --remote-debugging-port
+          or one-shot options do not read or modify the saved hosts settings.
 
         Example:
           EtcHostsBrowser.exe https://www.example.com/ --hosts "192.0.2.10 www.example.com" ^
@@ -141,6 +145,7 @@ public sealed class CliOptions
                     o.AuthPassword = cred[(colon + 1)..];
                     break;
                 case "--no-proxy": o.NoProxy = true; break;
+                case "--prefer-http": o.PreferHttp = true; break;
                 case "--remote-debugging-port": o.DebugPort = IntValue(1, 65535); break;
                 case "--json": o.Json = true; break;
                 case "--screenshot": o.ScreenshotPath = Path.GetFullPath(Value()); break;
