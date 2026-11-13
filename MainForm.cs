@@ -27,6 +27,8 @@ public sealed class MainForm : Form
     private readonly bool _persist;
     private string _hostsText;
     private List<HostRule> _rules;
+    private string _headerText;
+    private List<HeaderRule> _headerRules;
     private readonly Dictionary<string, ConnInfo> _conn = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CoreWebView2WebErrorStatus> _certErrors = new(StringComparer.OrdinalIgnoreCase);
     private readonly string? _startUrl;
@@ -111,6 +113,10 @@ public sealed class MainForm : Form
         _rules = HostsFile.Parse(_hostsText);
         if (cli.NoProxy) _settings.NoProxy = true;
         if (cli.PreferHttp) _settings.PreferHttp = true;
+        // 一時的な起動では、保存済みの上書きルールや CORS 無効化を黙って効かせない（結果が変わってしまうため）
+        _headerText = cli.HeaderText ?? (_persist ? AppSettings.LoadHeaderText() : "");
+        _headerRules = HeaderRules.Parse(_headerText);
+        _settings.DisableCors = cli.DisableCors || (_persist && _settings.DisableCors);
 
         Text = AppTitle;
         ClientSize = new Size(LogicalToDeviceUnits(1200), LogicalToDeviceUnits(800));
@@ -247,6 +253,8 @@ public sealed class MainForm : Form
             // http:// の URL を https:// に自動で昇格させる機能（失敗時だけ http に戻る）を止める
             args.Add("--disable-features=HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,HttpsFirstBalancedMode");
         }
+        if (_settings.DisableCors)
+            args.Add("--disable-web-security");
         if (_cli.DebugPort is { } port)
             args.Add($"--remote-debugging-port={port}");
         return string.Join(" ", args);
@@ -391,6 +399,18 @@ public sealed class MainForm : Form
         // 接続先 IP と TLS 情報は DevTools Protocol から取る
         core.GetDevToolsProtocolEventReceiver("Network.responseReceived").DevToolsProtocolEventReceived += OnResponseReceived;
         await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
+
+        // 応答ヘッダーの上書き。対象の URL だけ、応答を受け取った時点で止めてもらう
+        if (_headerRules.Count > 0)
+        {
+            core.GetDevToolsProtocolEventReceiver("Fetch.requestPaused").DevToolsProtocolEventReceived +=
+                (_, e) => OnRequestPaused(core, e);
+            await core.CallDevToolsProtocolMethodAsync("Fetch.enable", JsonSerializer.Serialize(new
+            {
+                patterns = _headerRules.Select(r => r.FetchPattern).Distinct()
+                                       .Select(p => new { urlPattern = p, requestStage = "Response" }),
+            }));
+        }
 
         // hosts 反映のための再起動だった場合は、直前の Cookie を戻す
         if (_carriedCookies != null)
@@ -592,6 +612,53 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>止めてもらった応答のヘッダーを書き換えて、続きを流す。必ず続行させないと読み込みが止まったままになる。</summary>
+    private async void OnRequestPaused(CoreWebView2 core, CoreWebView2DevToolsProtocolEventReceivedEventArgs e)
+    {
+        string? requestId = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(e.ParameterObjectAsJson);
+            var root = doc.RootElement;
+            requestId = root.GetProperty("requestId").GetString();
+            string url = root.GetProperty("request").GetProperty("url").GetString() ?? "";
+
+            // 接続エラーなどで応答がない場合は、そのまま続行させる
+            List<KeyValuePair<string, string>>? headers = null;
+            if (root.TryGetProperty("responseStatusCode", out var status)
+                && root.TryGetProperty("responseHeaders", out var original))
+            {
+                headers = HeaderRules.Apply(_headerRules, url, original.EnumerateArray().Select(h =>
+                    new KeyValuePair<string, string>(h.GetProperty("name").GetString() ?? "",
+                                                     h.GetProperty("value").GetString() ?? "")));
+            }
+
+            if (headers == null)
+            {
+                await core.CallDevToolsProtocolMethodAsync("Fetch.continueRequest", JsonSerializer.Serialize(new { requestId }));
+                return;
+            }
+            await core.CallDevToolsProtocolMethodAsync("Fetch.continueResponse", JsonSerializer.Serialize(new
+            {
+                requestId,
+                responseCode = status.GetInt32(),
+                responseHeaders = headers.Select(h => new { name = h.Key, value = h.Value }),
+            }));
+        }
+        catch (Exception)
+        {
+            if (requestId == null) return;
+            try
+            {
+                await core.CallDevToolsProtocolMethodAsync("Fetch.continueRequest", JsonSerializer.Serialize(new { requestId }));
+            }
+            catch (Exception)
+            {
+                // ブラウザの再起動や終了と重なった場合など
+            }
+        }
+    }
+
     private void UpdateStatus()
     {
         var uri = _webView?.Source;
@@ -655,11 +722,13 @@ public sealed class MainForm : Form
         _hostsLabel.Text = $"hosts: {_rules.Count} 件"
                            + (_settings.NoProxy ? " / プロキシ不使用" : "")
                            + (_settings.PreferHttp ? " / http 優先" : "")
+                           + (_settings.DisableCors ? " / CORS 無効" : "")
+                           + (_headerRules.Count > 0 ? $" / ヘッダー上書き {_headerRules.Count} 件" : "")
                            + (_cli.DebugPort is { } port ? $" / CDP 127.0.0.1:{port}" : "")
                            + (_persist ? "" : " / 一時セッション");
-        _hostsLabel.ToolTipText = _rules.Count == 0
-            ? "hosts 設定はありません"
-            : string.Join("\r\n", _rules.Take(30).Select(r => $"{r.Address}  {r.Host}"));
+        _hostsLabel.ToolTipText = string.Join("\r\n",
+            (_rules.Count == 0 ? ["hosts 設定はありません"] : _rules.Take(30).Select(r => $"{r.Address}  {r.Host}"))
+            .Concat(_headerRules.Take(15).Select(r => $"ヘッダー: {r}")));
     }
 
     // ───────────────────────── デバイス模擬（レスポンシブ確認） ─────────────────────────
@@ -944,7 +1013,8 @@ public sealed class MainForm : Form
     {
         if (_restarting) return;
 
-        using var dialog = new HostsDialog(_hostsText, _settings.NoProxy, _settings.PreferHttp);
+        using var dialog = new HostsDialog(_hostsText, _headerText, _settings.NoProxy, _settings.PreferHttp,
+                                            _settings.DisableCors);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         try
@@ -952,9 +1022,12 @@ public sealed class MainForm : Form
             _hostsText = dialog.HostsText;
             _settings.NoProxy = dialog.NoProxy;
             _settings.PreferHttp = dialog.PreferHttp;
+            _settings.DisableCors = dialog.DisableCors;
+            _headerText = dialog.HeaderText;
             if (_persist)
             {
                 AppSettings.SaveHostsText(_hostsText);
+                AppSettings.SaveHeaderText(_headerText);
                 _settings.Save();
             }
         }
@@ -966,6 +1039,7 @@ public sealed class MainForm : Form
         }
 
         _rules = HostsFile.Parse(dialog.HostsText);
+        _headerRules = HeaderRules.Parse(_headerText);
         UpdateHostsLabel();
         await RestartBrowserAsync();
     }

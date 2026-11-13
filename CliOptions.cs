@@ -12,6 +12,9 @@ public sealed class CliOptions
     public string? HostsText { get; private set; }
     public bool NoProxy { get; private set; }
     public bool PreferHttp { get; private set; }
+    public bool DisableCors { get; private set; }
+    /// <summary>--response-header / --response-headers-file で渡された応答ヘッダーの上書き設定。</summary>
+    public string? HeaderText { get; private set; }
     public DevicePreset? Device { get; private set; }
     public int? DebugPort { get; private set; }
     public string? ScreenshotPath { get; private set; }
@@ -30,7 +33,8 @@ public sealed class CliOptions
     /// <summary>
     /// 保存済みの設定と違う条件で動かすモード。hosts 設定などを読み書きせず、この起動の間だけ有効にする。
     /// </summary>
-    public bool IsIsolated => IsBatch || HostsText != null || NoProxy || PreferHttp || DebugPort != null;
+    public bool IsIsolated => IsBatch || HostsText != null || NoProxy || PreferHttp || DisableCors
+                              || HeaderText != null || DebugPort != null;
 
     /// <summary>この起動専用の使い捨てプロファイルの場所（Program が設定する）。</summary>
     public string ProfileDir { get; set; } = "";
@@ -54,6 +58,13 @@ public sealed class CliOptions
           --prefer-http                 open URLs without a scheme as http:// and never upgrade
                                         http:// to https:// (automatic HTTPS upgrades and HSTS
                                         learned from visited sites; the HSTS preload list still applies)
+          --disable-cors                turn off the same-origin policy (CORS), so that scripts on
+                                        the page can read responses from any other origin
+          --response-header "URLPATTERN NAME: VALUE"
+                                        set (replace) a response header on responses whose URL
+                                        matches URLPATTERN ('*' matches any text). Repeatable.
+                                        "URLPATTERN -NAME" removes the header instead.
+          --response-headers-file PATH  read response header rules from a file, one per line
           --remote-debugging-port N     expose the Chrome DevTools Protocol on 127.0.0.1:N so that
                                         Playwright / Puppeteer / browser MCP servers can attach
                                         (e.g. connectOverCDP("http://127.0.0.1:N"))
@@ -72,8 +83,9 @@ public sealed class CliOptions
           Invalid TLS certificates never block the page; they are reported in the JSON instead.
           Cookies, cache and site storage live only while the window is open; every launch starts
           clean and its profile is deleted on exit.
-          Runs with any of --hosts, --hosts-file, --no-proxy, --prefer-http, --remote-debugging-port
-          or one-shot options do not read or modify the saved hosts settings.
+          Runs with any of --hosts, --hosts-file, --no-proxy, --prefer-http, --disable-cors,
+          --response-header, --response-headers-file, --remote-debugging-port or one-shot options
+          do not read or modify the saved settings.
 
         Example:
           EtcHostsBrowser.exe https://www.example.com/ --hosts "192.0.2.10 www.example.com" ^
@@ -84,6 +96,7 @@ public sealed class CliOptions
     {
         var o = new CliOptions();
         var hosts = new StringBuilder();
+        var headers = new StringBuilder();
         (int W, int H)? viewport = null;
 
         for (int i = 0; i < args.Length; i++)
@@ -146,6 +159,16 @@ public sealed class CliOptions
                     break;
                 case "--no-proxy": o.NoProxy = true; break;
                 case "--prefer-http": o.PreferHttp = true; break;
+                case "--disable-cors": o.DisableCors = true; break;
+                case "--response-header": headers.AppendLine(Value()); break;
+                case "--response-headers-file":
+                    string headersPath = Value();
+                    try { headers.AppendLine(File.ReadAllText(headersPath)); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        throw new ArgumentException($"--response-headers-file: cannot read '{headersPath}': {ex.Message}");
+                    }
+                    break;
                 case "--remote-debugging-port": o.DebugPort = IntValue(1, 65535); break;
                 case "--json": o.Json = true; break;
                 case "--screenshot": o.ScreenshotPath = Path.GetFullPath(Value()); break;
@@ -165,6 +188,17 @@ public sealed class CliOptions
                 throw new ArgumentException("Invalid hosts entries (expected \"IP HOST [HOST...]\"): " +
                                             hosts.ToString().Trim().ReplaceLineEndings("; "));
             o.HostsText = hosts.ToString();
+        }
+
+        if (headers.Length > 0)
+        {
+            var errors = new List<string>();
+            HeaderRules.Parse(headers.ToString(), errors);
+            if (errors.Count > 0)
+                throw new ArgumentException("Invalid response header rules (expected \"URLPATTERN NAME: VALUE\" " +
+                                            "or \"URLPATTERN -NAME\", URLPATTERN like * or https://host/*): " +
+                                            headers.ToString().Trim().ReplaceLineEndings("; "));
+            o.HeaderText = headers.ToString();
         }
 
         if (viewport is { } v)
